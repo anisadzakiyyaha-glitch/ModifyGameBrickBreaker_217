@@ -289,3 +289,277 @@ class PowerUp:
         text(surf, self.kind, FONT_S, (20, 20, 40), r.center, shadow=False)
 
 
+# ---------------------------------------------------------------
+# pengatur game
+# ---------------------------------------------------------------
+class Game:
+    def __init__(self):
+        self.canvas = pygame.Surface((WIDTH, HEIGHT))
+        self.bg = pygame.Surface((WIDTH, HEIGHT))
+        for y in range(HEIGHT):
+            pygame.draw.line(self.bg, mix(BG_TOP, BG_BOTTOM, y / HEIGHT), (0, y), (WIDTH, y))
+        self.stars = [[random.uniform(0, WIDTH), random.uniform(0, HEIGHT),
+                       random.uniform(0.2, 1.2), random.randint(1, 2)] for _ in range(70)]
+        self.high = load_high()
+        self.tick = 0
+        self.state = "menu"
+        self.reset()
+
+    # ---------- pengaturan awal ----------
+    def reset(self):
+        self.score = 0
+        self.lives = 3
+        self.level = 1
+        self.combo = 1
+        self.shake = 0
+        self.clear_timer = 0
+        self.paddle = Paddle()
+        self.particles = []
+        self.popups = []
+        self.start_level()
+
+    def start_level(self):
+        self.bricks = self.build_level(self.level)
+        self.powerups = []
+        self.effects = {"W": 0, "S": 0, "F": 0}
+        self.paddle.set_width(self.paddle.base_w)
+        self.new_ball()
+
+    def new_ball(self):
+        self.balls = [Ball(self.paddle.x + self.paddle.w / 2, self.paddle.y - 9)]
+
+    def build_level(self, level):
+        rows = LAYOUTS[(level - 1) % len(LAYOUTS)]
+        extra_hp = (level - 1) // len(LAYOUTS)
+        bw, bh, gap = 56, 22, 4
+        sx = (WIDTH - (12 * bw + 11 * gap)) // 2
+        sy = HUD_H + 50
+        bricks = []
+        for r, line in enumerate(rows):
+            for c, ch in enumerate(line):
+                if ch == ".":
+                    continue
+                x = sx + c * (bw + gap)
+                y = sy + r * (bh + gap)
+                if ch == "S":
+                    bricks.append(Brick(x, y, bw, bh, "steel", 99))
+                elif ch == "B":
+                    bricks.append(Brick(x, y, bw, bh, "bonus", 1))
+                else:
+                    bricks.append(Brick(x, y, bw, bh, "normal", min(3, int(ch) + extra_hp)))
+        return bricks
+
+    def base_speed(self):
+        return min(5.5 + 0.45 * (self.level - 1), 9.5)
+
+    # ---------- efek visual ----------
+    def burst(self, x, y, color, n=14, power=4):
+        for _ in range(n):
+            a = random.uniform(0, math.tau)
+            s = random.uniform(1, power)
+            life = random.randint(20, 40)
+            self.particles.append([x, y, math.cos(a) * s, math.sin(a) * s, life, life, color, random.randint(2, 4)])
+
+    def popup(self, msg, x, y, color):
+        self.popups.append([msg, x, y, 60, color])
+
+    # ---------- aksi ----------
+    def launch(self):
+        for b in self.balls:
+            if b.stuck:
+                b.stuck = False
+                b.vx = random.uniform(-0.5, 0.5)
+                b.vy = -1
+                b.set_speed(self.base_speed())
+
+    def apply_power(self, kind):
+        play("power")
+        self.popup(POWER_INFO[kind][1], self.paddle.x + self.paddle.w / 2, self.paddle.y - 20, POWER_INFO[kind][0])
+        if kind == "W":
+            self.effects["W"] = 600
+            self.paddle.set_width(self.paddle.base_w * 1.6)
+        elif kind == "S":
+            self.effects["S"] = 480
+        elif kind == "F":
+            self.effects["F"] = 360
+        elif kind == "N":
+            self.lives = min(5, self.lives + 1)
+        elif kind == "M":
+            moving = [b for b in self.balls if not b.stuck]
+            if moving:
+                src = moving[0]
+                for deg in (-25, 25):
+                    nb = Ball(src.x, src.y, stuck=False)
+                    nb.vx, nb.vy = src.vx, src.vy
+                    nb.rotate(deg)
+                    self.balls.append(nb)
+
+    def destroy_brick(self, brick):
+        self.score += 10 * brick.max_hp * self.combo
+        self.combo = min(self.combo + 1, 8)
+        self.burst(brick.rect.centerx, brick.rect.centery, brick.color)
+        self.shake = max(self.shake, 4)
+        play("break")
+        if brick.kind == "bonus" or random.random() < 0.12:
+            kind = random.choices(list(POWER_INFO), weights=[3, 3, 3, 2, 1])[0]
+            self.powerups.append(PowerUp(brick.rect.centerx, brick.rect.centery, kind))
+
+    def lose_life(self):
+        self.lives -= 1
+        self.combo = 1
+        self.shake = 20
+        play("lose")
+        self.effects = {"W": 0, "S": 0, "F": 0}
+        self.paddle.set_width(self.paddle.base_w)
+        if self.lives <= 0:
+            self.state = "gameover"
+            if self.score > self.high:
+                self.high = self.score
+                save_high(self.high)
+        else:
+            self.new_ball()
+
+    # ---------- update ----------
+    def update_ball(self, ball):
+        p = self.paddle
+        if ball.stuck:
+            ball.x = p.x + p.w / 2
+            ball.y = p.y - ball.r - 1
+            return
+
+        speed = self.base_speed() * (0.7 if self.effects["S"] > 0 else 1)
+        ball.set_speed(speed)
+        # jaga supaya bola nggak terlalu datar
+        if abs(ball.vy) < speed * 0.3:
+            ball.vy = math.copysign(speed * 0.3, ball.vy or -1)
+            ball.set_speed(speed)
+
+        ball.trail.append((ball.x, ball.y))
+        ball.x += ball.vx
+        ball.y += ball.vy
+
+        # dinding
+        if ball.x <= ball.r:
+            ball.x, ball.vx = ball.r, abs(ball.vx)
+            play("wall")
+        elif ball.x >= WIDTH - ball.r:
+            ball.x, ball.vx = WIDTH - ball.r, -abs(ball.vx)
+            play("wall")
+        if ball.y <= HUD_H + ball.r:
+            ball.y, ball.vy = HUD_H + ball.r, abs(ball.vy)
+            play("wall")
+
+        # papan: sudut pantulan tergantung bagian papan yang kena
+        pr = p.rect
+        if ball.vy > 0 and ball.rect.colliderect(pr) and ball.y < pr.bottom:
+            off = clamp((ball.x - pr.centerx) / (pr.w / 2), -1, 1)
+            ang = off * math.radians(60) + math.radians(random.uniform(-4, 4))
+            sp = math.hypot(ball.vx, ball.vy)
+            ball.vx, ball.vy = sp * math.sin(ang), -sp * math.cos(ang)
+            ball.y = pr.top - ball.r - 1
+            self.combo = 1
+            self.burst(ball.x, pr.top, CYAN, n=5, power=2)
+            play("paddle")
+
+        self.hit_bricks(ball)
+
+    def hit_bricks(self, ball):
+        fire = self.effects["F"] > 0
+        br = ball.rect
+        for brick in self.bricks:
+            if brick.hp <= 0 or not br.colliderect(brick.rect):
+                continue
+            if fire and brick.kind != "steel":
+                brick.hp = 0
+                self.destroy_brick(brick)
+                continue
+
+            # pantul: tentukan dari sisi mana bola menabrak
+            ox = min(br.right - brick.rect.left, brick.rect.right - br.left)
+            oy = min(br.bottom - brick.rect.top, brick.rect.bottom - br.top)
+            if ox < oy:
+                ball.vx = -abs(ball.vx) if ball.x < brick.rect.centerx else abs(ball.vx)
+                ball.x += -ox if ball.x < brick.rect.centerx else ox
+            else:
+                ball.vy = -abs(ball.vy) if ball.y < brick.rect.centery else abs(ball.vy)
+                ball.y += -oy if ball.y < brick.rect.centery else oy
+
+            if brick.kind == "steel":
+                brick.flash = 6
+                play("steel")
+            else:
+                brick.hp -= 1
+                brick.flash = 6
+                if brick.hp <= 0:
+                    self.destroy_brick(brick)
+                else:
+                    self.score += 5
+                    play("hit")
+            break
+        self.bricks = [b for b in self.bricks if b.hp > 0]
+
+    def update_playing(self):
+        keys = pygame.key.get_pressed()
+        direction = (keys[pygame.K_RIGHT] or keys[pygame.K_d]) - (keys[pygame.K_LEFT] or keys[pygame.K_a])
+        if direction:
+            self.paddle.move(direction)
+
+        for k in self.effects:
+            if self.effects[k] > 0:
+                self.effects[k] -= 1
+                if k == "W" and self.effects[k] == 0:
+                    self.paddle.set_width(self.paddle.base_w)
+
+        for ball in self.balls:
+            self.update_ball(ball)
+        self.balls = [b for b in self.balls if b.y < HEIGHT + 20]
+        if not self.balls:
+            self.lose_life()
+            return
+
+        for pu in self.powerups:
+            pu.y += 3
+        caught = [pu for pu in self.powerups if pu.rect.colliderect(self.paddle.rect)]
+        for pu in caught:
+            self.apply_power(pu.kind)
+        self.powerups = [pu for pu in self.powerups if pu not in caught and pu.y < HEIGHT + 20]
+
+        if not any(b.kind != "steel" for b in self.bricks):
+            self.state = "levelclear"
+            self.clear_timer = 120
+            self.score += 100 * self.level
+            play("clear")
+
+    def update(self):
+        self.tick += 1
+        for s in self.stars:
+            s[1] += s[2]
+            if s[1] > HEIGHT:
+                s[0], s[1] = random.uniform(0, WIDTH), 0
+
+        for b in self.bricks:
+            if b.flash > 0:
+                b.flash -= 1
+        for pt in self.particles:
+            pt[0] += pt[2]
+            pt[1] += pt[3]
+            pt[3] += 0.12
+            pt[4] -= 1
+        self.particles = [pt for pt in self.particles if pt[4] > 0]
+        for po in self.popups:
+            po[2] -= 0.8
+            po[3] -= 1
+        self.popups = [po for po in self.popups if po[3] > 0]
+        if self.shake > 0:
+            self.shake -= 1
+
+        if self.state == "playing":
+            self.update_playing()
+        elif self.state == "levelclear":
+            self.clear_timer -= 1
+            if self.clear_timer <= 0:
+                self.level += 1
+                self.start_level()
+                self.state = "playing"
+
+   
