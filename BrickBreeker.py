@@ -182,3 +182,110 @@ def play(name):
         s.play()
 
 
+# ---------------------------------------------------------------
+# objek-objek game
+# ---------------------------------------------------------------
+class Paddle:
+    def __init__(self):
+        self.base_w = 110
+        self.w = self.base_w
+        self.h = 14
+        self.x = WIDTH / 2 - self.w / 2
+        self.y = HEIGHT - 44
+        self.speed = 9
+
+    @property
+    def rect(self):
+        return pygame.Rect(int(self.x), int(self.y), int(self.w), self.h)
+
+    def move(self, direction):
+        self.x = clamp(self.x + direction * self.speed, 0, WIDTH - self.w)
+
+    def set_center(self, cx):
+        self.x = clamp(cx - self.w / 2, 0, WIDTH - self.w)
+
+    def set_width(self, w):
+        center = self.x + self.w / 2
+        self.w = w
+        self.set_center(center)
+
+    def draw(self, surf):
+        r = self.rect
+        surf.blit(glow(60, CYAN), (r.centerx - 60, r.centery - 60))
+        pygame.draw.rect(surf, CYAN, r, border_radius=7)
+        pygame.draw.rect(surf, (200, 245, 255), (r.x + 6, r.y + 2, r.w - 12, 4), border_radius=3)
+
+
+class Ball:
+    def __init__(self, x, y, stuck=True):
+        self.x, self.y = x, y
+        self.vx, self.vy = 0.0, -1.0
+        self.r = 8
+        self.stuck = stuck
+        self.trail = deque(maxlen=12)
+
+    @property
+    def rect(self):
+        return pygame.Rect(int(self.x - self.r), int(self.y - self.r), self.r * 2, self.r * 2)
+
+    def set_speed(self, speed):
+        mag = math.hypot(self.vx, self.vy) or 1
+        self.vx, self.vy = self.vx / mag * speed, self.vy / mag * speed
+
+    def rotate(self, degrees):
+        a = math.radians(degrees)
+        self.vx, self.vy = (self.vx * math.cos(a) - self.vy * math.sin(a),
+                            self.vx * math.sin(a) + self.vy * math.cos(a))
+
+
+class Brick:
+    def __init__(self, x, y, w, h, kind, hp):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.kind = kind          # normal, bonus, steel
+        self.hp = hp
+        self.max_hp = hp
+        self.flash = 0
+
+    @property
+    def color(self):
+        if self.kind == "steel":
+            return STEEL
+        if self.kind == "bonus":
+            return PURPLE
+        return HP_COLORS[max(1, self.hp)]
+
+    def draw(self, surf, tick):
+        col = self.color
+        if self.kind == "bonus":
+            col = mix(PURPLE, WHITE, (math.sin(tick * 0.12) + 1) * 0.2)
+        if self.flash > 0:
+            col = mix(col, WHITE, self.flash / 6)
+        r = self.rect
+        pygame.draw.rect(surf, col, r, border_radius=4)
+        pygame.draw.rect(surf, mix(col, WHITE, 0.45), (r.x + 3, r.y + 2, r.w - 6, 5), border_radius=3)
+        pygame.draw.rect(surf, mix(col, (0, 0, 0), 0.45), r, 2, border_radius=4)
+        if self.kind == "steel":
+            for px in (r.x + 6, r.right - 7):
+                pygame.draw.circle(surf, (90, 95, 115), (px, r.centery), 2)
+        elif self.kind == "bonus":
+            text(surf, "?", FONT_S, WHITE, r.center, shadow=False)
+
+
+class PowerUp:
+    def __init__(self, x, y, kind):
+        self.x, self.y = x, y
+        self.kind = kind
+
+    @property
+    def rect(self):
+        return pygame.Rect(int(self.x - 17), int(self.y - 10), 34, 20)
+
+    def draw(self, surf):
+        color = POWER_INFO[self.kind][0]
+        r = self.rect
+        surf.blit(glow(26, color), (r.centerx - 26, r.centery - 26))
+        pygame.draw.rect(surf, color, r, border_radius=10)
+        pygame.draw.rect(surf, WHITE, r, 2, border_radius=10)
+        text(surf, self.kind, FONT_S, (20, 20, 40), r.center, shadow=False)
+
+
