@@ -562,4 +562,189 @@ class Game:
                 self.start_level()
                 self.state = "playing"
 
-   
+    # ---------- gambar ----------
+    def draw_hud(self, s):
+        pygame.draw.rect(s, (12, 10, 32), (0, 0, WIDTH, HUD_H))
+        pygame.draw.line(s, CYAN, (0, HUD_H), (WIDTH, HUD_H), 2)
+        text(s, "SKOR " + str(self.score), FONT_M, WHITE, (95, HUD_H // 2))
+        text(s, "TERBAIK " + str(max(self.high, self.score)), FONT_S, YELLOW, (265, HUD_H // 2))
+        text(s, "LEVEL " + str(self.level), FONT_M, CYAN, (WIDTH // 2 + 40, HUD_H // 2))
+        for i in range(self.lives):
+            draw_heart(s, WIDTH - 40 - i * 34, HUD_H // 2 - 2, 10, RED)
+
+        # timer power-up di kiri bawah
+        x = 14
+        for k, label in (("W", "LEBAR"), ("S", "LAMBAT"), ("F", "API")):
+            if self.effects[k] > 0:
+                full = {"W": 600, "S": 480, "F": 360}[k]
+                color = POWER_INFO[k][0]
+                text(s, label, FONT_S, color, (x + 30, HEIGHT - 26))
+                pygame.draw.rect(s, (50, 50, 70), (x, HEIGHT - 14, 60, 6), border_radius=3)
+                pygame.draw.rect(s, color, (x, HEIGHT - 14, int(60 * self.effects[k] / full), 6), border_radius=3)
+                x += 80
+        if self.combo > 1:
+            text(s, "KOMBO x" + str(self.combo), FONT_M, ORANGE, (WIDTH - 90, HEIGHT - 20))
+
+    def draw(self):
+        s = self.canvas
+        s.blit(self.bg, (0, 0))
+        for x, y, spd, size in self.stars:
+            c = int(110 + 100 * spd / 1.2)
+            pygame.draw.circle(s, (c, c, c + 20), (int(x), int(y)), size)
+
+        for b in self.bricks:
+            b.draw(s, self.tick)
+        for pu in self.powerups:
+            pu.draw(s)
+        self.paddle.draw(s)
+
+        fire = self.effects["F"] > 0
+        for ball in self.balls:
+            color = ORANGE if fire else PINK
+            for i, (tx, ty) in enumerate(ball.trail):
+                r = max(1, int(ball.r * (i + 1) / len(ball.trail) * 0.8))
+                pygame.draw.circle(s, mix(BG_BOTTOM, color, (i + 1) / len(ball.trail)), (int(tx), int(ty)), r)
+            s.blit(glow(30, color), (int(ball.x) - 30, int(ball.y) - 30))
+            pygame.draw.circle(s, color, (int(ball.x), int(ball.y)), ball.r)
+            pygame.draw.circle(s, WHITE, (int(ball.x) - 2, int(ball.y) - 2), 3)
+
+        for x, y, vx, vy, life, maxlife, color, size in self.particles:
+            c = mix(BG_BOTTOM, color, life / maxlife)
+            pygame.draw.circle(s, c, (int(x), int(y)), max(1, int(size * life / maxlife)))
+        for msg, x, y, life, color in self.popups:
+            text(s, msg, FONT_S, color, (int(x), int(y)))
+
+        self.draw_hud(s)
+        self.draw_overlay(s)
+
+        ox = oy = 0
+        if self.shake > 0:
+            ox = random.randint(-self.shake // 3, self.shake // 3)
+            oy = random.randint(-self.shake // 3, self.shake // 3)
+        screen.fill((0, 0, 0))
+        screen.blit(s, (ox, oy))
+        pygame.display.flip()
+
+    def dim(self, s, alpha=150):
+        d = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        d.fill((0, 0, 0, alpha))
+        s.blit(d, (0, 0))
+
+    def draw_menu(self, s):
+        cx = WIDTH // 2
+        self.dim(s, 215)
+        hue = mix(CYAN, PINK, (math.sin(self.tick * 0.04) + 1) / 2)
+        text(s, "BRICK BREAKER", FONT_L, hue, (cx, 95))
+        text(s, "Edisi Modifikasi", FONT_M, WHITE, (cx, 140))
+
+        # panel penjelasan
+        panel = pygame.Surface((660, 300), pygame.SRCALPHA)
+        pygame.draw.rect(panel, (20, 16, 50, 190), panel.get_rect(), border_radius=14)
+        pygame.draw.rect(panel, (*CYAN, 255), panel.get_rect(), 2, border_radius=14)
+        s.blit(panel, (70, 175))
+
+        def left(msg, font, color, x, y):
+            img = font.render(msg, True, color)
+            s.blit(img, img.get_rect(midleft=(x, y)))
+
+        # kolom kiri: kontrol
+        left("KONTROL", FONT_M, CYAN, 100, 205)
+        controls = [("A / D / Panah", "Gerakkan papan"),
+                    ("Mouse", "Gerakkan papan"),
+                    ("SPACE / Klik", "Luncurkan bola"),
+                    ("P", "Pause"),
+                    ("ESC", "Keluar")]
+        for i, (key, desc) in enumerate(controls):
+            y = 240 + i * 28
+            left(key, FONT_S, YELLOW, 100, y)
+            left(desc, FONT_S, WHITE, 245, y)
+
+        # kolom kiri bawah: tingkat balok
+        left("BALOK", FONT_M, CYAN, 100, 405)
+        for i, (hp, label) in enumerate(((1, "1x"), (2, "2x"), (3, "3x"))):
+            bx = 100 + i * 85
+            pygame.draw.rect(s, HP_COLORS[hp], (bx, 428, 38, 16), border_radius=4)
+            left(label, FONT_S, WHITE, bx + 45, 436)
+
+        # kolom kanan: power-up
+        left("POWER-UP", FONT_M, CYAN, 420, 205)
+        info = {"W": "Papan lebar", "M": "Multi bola", "S": "Bola lambat",
+                "F": "Bola api (tembus balok)", "N": "Tambah nyawa"}
+        for i, (k, desc) in enumerate(info.items()):
+            y = 240 + i * 28
+            color = POWER_INFO[k][0]
+            icon = pygame.Rect(420, y - 9, 30, 18)
+            pygame.draw.rect(s, color, icon, border_radius=9)
+            text(s, k, FONT_S, (20, 20, 40), icon.center, shadow=False)
+            left(desc, FONT_S, WHITE, 462, y)
+
+        # kolom kanan bawah: balok spesial
+        pygame.draw.rect(s, PURPLE, (420, 395, 38, 16), border_radius=4)
+        text(s, "?", FONT_S, WHITE, (439, 403), shadow=False)
+        left("Pasti jatuhkan power-up", FONT_S, WHITE, 468, 403)
+        pygame.draw.rect(s, STEEL, (420, 425, 38, 16), border_radius=4)
+        left("Balok baja, tidak bisa hancur", FONT_S, WHITE, 468, 433)
+
+        if (self.tick // 30) % 2 == 0:
+            text(s, "Tekan SPACE untuk mulai", FONT_M, YELLOW, (cx, 520))
+        text(s, "Skor terbaik : " + str(self.high), FONT_S, WHITE, (cx, 560))
+
+    def draw_overlay(self, s):
+        cx = WIDTH // 2
+        if self.state == "menu":
+            self.draw_menu(s)
+        elif self.state == "paused":
+            self.dim(s, 120)
+            text(s, "PAUSE", FONT_L, YELLOW, (cx, HEIGHT // 2 - 10))
+            text(s, "Tekan P untuk lanjut", FONT_M, WHITE, (cx, HEIGHT // 2 + 40))
+        elif self.state == "levelclear":
+            text(s, "LEVEL " + str(self.level) + " SELESAI!", FONT_L, GREEN, (cx, HEIGHT // 2))
+            text(s, "Bonus +" + str(100 * self.level), FONT_M, YELLOW, (cx, HEIGHT // 2 + 50))
+        elif self.state == "gameover":
+            self.dim(s)
+            text(s, "GAME OVER", FONT_L, RED, (cx, HEIGHT // 2 - 40))
+            text(s, "Skor : " + str(self.score) + "     Terbaik : " + str(self.high), FONT_M, WHITE, (cx, HEIGHT // 2 + 15))
+            if self.score >= self.high and self.score > 0:
+                text(s, "REKOR BARU!", FONT_M, YELLOW, (cx, HEIGHT // 2 + 55))
+            text(s, "Tekan SPACE untuk main lagi", FONT_M, CYAN, (cx, HEIGHT // 2 + 100))
+        elif self.state == "playing" and any(b.stuck for b in self.balls):
+            text(s, "Tekan SPACE untuk meluncurkan bola", FONT_S, WHITE, (cx, HEIGHT - 80))
+
+    # ---------- loop utama ----------
+    def handle(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                return False
+            if event.key == pygame.K_SPACE:
+                if self.state == "menu":
+                    self.state = "playing"
+                elif self.state == "gameover":
+                    self.reset()
+                    self.state = "playing"
+                elif self.state == "playing":
+                    self.launch()
+            if event.key == pygame.K_p:
+                if self.state == "playing":
+                    self.state = "paused"
+                elif self.state == "paused":
+                    self.state = "playing"
+        elif event.type == pygame.MOUSEMOTION and self.state == "playing":
+            self.paddle.set_center(event.pos[0])
+        elif event.type == pygame.MOUSEBUTTONDOWN and self.state == "playing":
+            self.launch()
+        return True
+
+    def run(self):
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or not self.handle(event):
+                    running = False
+            self.update()
+            self.draw()
+            clock.tick(FPS)
+
+
+if __name__ == "__main__":
+    Game().run()
+    pygame.quit()
