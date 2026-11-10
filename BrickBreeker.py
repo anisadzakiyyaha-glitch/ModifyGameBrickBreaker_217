@@ -85,3 +85,100 @@ clock = pygame.time.Clock()
 FONT_S = pygame.font.Font(None, 22)
 FONT_M = pygame.font.Font(None, 32)
 FONT_L = pygame.font.Font(None, 72)
+
+
+# ---------------------------------------------------------------
+# fungsi bantu
+# ---------------------------------------------------------------
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def mix(c1, c2, t):
+    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+
+
+def text(surf, msg, font, color, center, shadow=True):
+    if shadow:
+        sh = font.render(msg, True, (0, 0, 0))
+        surf.blit(sh, sh.get_rect(center=(center[0] + 2, center[1] + 2)))
+    img = font.render(msg, True, color)
+    surf.blit(img, img.get_rect(center=center))
+
+
+_glow_cache = {}
+
+
+def glow(radius, color):
+    key = (radius, color)
+    if key not in _glow_cache:
+        s = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        for i in range(radius, 0, -2):
+            a = int(120 * (1 - i / radius) ** 2)
+            pygame.draw.circle(s, (*color, a), (radius, radius), i)
+        _glow_cache[key] = s
+    return _glow_cache[key]
+
+
+def draw_heart(surf, cx, cy, size, color):
+    r = size // 2
+    pygame.draw.circle(surf, color, (cx - r, cy - r // 2), r)
+    pygame.draw.circle(surf, color, (cx + r, cy - r // 2), r)
+    pygame.draw.polygon(surf, color, [(cx - 2 * r, cy - r // 4), (cx + 2 * r, cy - r // 4), (cx, cy + 2 * r)])
+
+
+def load_high():
+    try:
+        with open(SAVE_FILE) as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+
+
+def save_high(value):
+    try:
+        with open(SAVE_FILE, "w") as f:
+            f.write(str(value))
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------
+# suara (dibuat sendiri pakai gelombang sinus, jadi nggak butuh file audio)
+# ---------------------------------------------------------------
+def make_tone(freq, ms, vol=0.3, end_freq=None):
+    sr = 22050
+    n = int(sr * ms / 1000)
+    end_freq = end_freq or freq
+    buf = array("h")
+    phase = 0.0
+    for i in range(n):
+        f = freq + (end_freq - freq) * i / n
+        phase += 2 * math.pi * f / sr
+        buf.append(int(math.sin(phase) * (1 - i / n) * vol * 32767))
+    return pygame.mixer.Sound(buffer=buf.tobytes())
+
+
+sounds = {}
+if pygame.mixer.get_init():
+    try:
+        sounds = {
+            "wall": make_tone(300, 60),
+            "paddle": make_tone(420, 80),
+            "hit": make_tone(520, 70),
+            "break": make_tone(700, 120, end_freq=300),
+            "steel": make_tone(200, 60, vol=0.4),
+            "power": make_tone(500, 250, end_freq=1000),
+            "lose": make_tone(400, 500, vol=0.4, end_freq=80),
+            "clear": make_tone(500, 600, end_freq=1200),
+        }
+    except Exception:
+        sounds = {}
+
+
+def play(name):
+    s = sounds.get(name)
+    if s:
+        s.play()
+
+
